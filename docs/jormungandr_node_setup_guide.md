@@ -108,7 +108,6 @@ chsh -s /bin/bash <USERNAME>
 apt update
 apt upgrade
 apt install -y build-essential libssl-dev
-apt install git
 apt install pkg-config
 apt install nload
 apt install jq
@@ -184,15 +183,8 @@ ufw default allow outgoing
 # Open ssh port (rate limiting enabled - max 10 attempts within 30 seconds)
 ufw limit proto tcp from any to any port <THE PORT YOU JUST CHOSE IN sshd_config>
 
-# REST_PORT: Chose a port number between 1024 and 65535, (do not choose 3000 or 3100).
-# REST_PORT: We will use this port to make queries to the REST api
-# REST_PORT: because this port is accessed internally,  we exclude it from our list of open ports.
-
-# Open all ports from 1024 up to, but not including your REST_PORT
-ufw allow proto tcp from any to any port 1024:<REST_PORT MINUS ONE>
-
-# Open all ports that are greater than your REST_PORT
-ufw allow proto tcp from any to any port <REST_PORT PLUS ONE>:65535
+# Open a port for your public_address. This is the port other nodes will connect to.
+ufw allow proto tcp from any to any port 3000
 
 # Re-enable firewall
 ufw enable
@@ -241,17 +233,11 @@ git clone https://github.com/Chris-Graffagnino/Jormungandr-for-Newbs.git -b file
 
 # Make the scripts executable
 chmod +x ~/files/*.sh
+chmod +x ~/files/env
 
 # Create .bashrc && .bash_profile
 # Note: You downloaded these to the files directory, although they are hidden. Type "ls -la ~/files"
-cat ~/files/.bashrc > ~/.bashrc && cat ~/files/.bash_profile > ~/.bash_profile
-
-# Now that you've copied the files to the proper location, delete the duplicate from the files directory
-rm ~/files/.bashrc && rm ~/files/.bash_profile
-
-# Change ownership of .bashrc and .bash_profile
-chown <USERNAME> ~/.bashrc
-chown <USERNAME> ~/.bash_profile
+cat ~/files/.bashrc > ~/.bashrc && cat ~/files/.bash_profile > ~/.bash_profile && cat ~/files/.bash_aliases > .bash_aliases
 
 # Restrict access to .bashrc and .bash_profile
 chmod 700 ~/.bashrc && chmod 700 ~/.bash_profile
@@ -346,55 +332,15 @@ free -h
 
 (Add the following to the bottom of /etc/sysctl.conf)
 ```
-fs.file-max = 10000000
-fs.nr_open = 10000000
-
-net.core.netdev_max_backlog = 100000
-net.core.somaxconn = 100000
-net.ipv4.icmp_echo_ignore_broadcasts = 1
-net.ipv4.ip_local_port_range = 1024 65535
-net.ipv4.ip_nonlocal_bind = 1
-net.ipv4.tcp_fin_timeout = 15
-net.ipv4.tcp_max_orphans = 262144
-net.ipv4.tcp_max_tw_buckets = 598016
-net.ipv4.tcp_mem = 786432 1697152 1945728
-net.ipv4.tcp_reordering = 3
-net.ipv4.tcp_rmem = 4096 87380 16777216
-net.ipv4.tcp_sack = 0
 net.ipv4.tcp_syncookies = 1
-net.ipv4.tcp_syn_retries = 3
-net.ipv4.tcp_synack_retries = 3
-net.ipv4.tcp_max_syn_backlog = 100000
-net.ipv4.tcp_tw_reuse = 1
-net.ipv4.tcp_wmem = 4096 16384 16777216
+net.ipv4.tcp_max_syn_backlog = 2048
 
-net.ipv4.tcp_window_scaling = 1
-net.core.dev_weight = 64
-net.core.optmem_max = 65535
-net.ipv4.tcp_orphan_retries = 0
-net.ipv4.ipfrag_high_thresh = 512000
-net.ipv4.ipfrag_low_thresh = 446464
-net.ipv4.tcp_no_metrics_save = 1
-net.ipv4.tcp_moderate_rcvbuf = 1
-net.ipv6.conf.all.disable_ipv6 = 1
-net.ipv6.conf.default.disable_ipv6 = 1
-net.ipv6.conf.lo.disable_ipv6 = 1
+# If you suffer from low connections, set this to 60.
+# Alternatively, if you want to conserve memory, try a lower number.
+net.ipv4.tcp_keepalive_time = 30
 
-# If you have less than 4GB RAM, consider setting this lower
-net.core.netdev_budget = 400
-
-net.netfilter.nf_conntrack_max = 10485760
-net.netfilter.nf_conntrack_tcp_timeout_fin_wait = 30
-net.netfilter.nf_conntrack_tcp_timeout_time_wait = 15
-
-net.ipv4.tcp_keepalive_time = 60
-net.ipv4.tcp_keepalive_intvl = 10
-net.ipv4.tcp_keepalive_probes = 3
-
-kernel.panic = 10
-kernel.randomize_va_space = 2
-kernel.pid_max = 65536
-net.ipv4.icmp_ignore_bogus_error_responses = 1
+net.ipv4.tcp_keepalive_intvl = 1
+net.ipv4.tcp_keepalive_probes = 5
 
 # Use Google's congestion control algorithm
 net.core.default_qdisc = fq
@@ -406,16 +352,6 @@ vm.vfs_cache_pressure = 50
 
 ### reload /etc/sysctl.conf
 ```
-# Verify ip_conntrack is loaded
-sudo lsmod | grep conntrack
-
-# If nothing is returned, load ip_conntrack
-sudo modprobe ip_conntrack
-
-# Reload sysctl.conf
-# You will see a list of all changes made, and possibly some errors if
-# a particular modudle is not installed. If you don't see anything, you
-# may be using a VPS that doesn't support kernel mods.
 sudo sysctl -p /etc/sysctl.conf
 ```
 
@@ -435,13 +371,12 @@ exit 0
 
 ### Edit /etc/chrony/chrony.conf
 `sudo nano /etc/chrony/chrony.conf`  
-Paste the following into /etc/chrony/chrony.conf. You may improve performance by adding ntp servers closest to your node.  
-[NTP server list](https://www.ntppool.org/zone/@)
-
+Paste the following into /etc/chrony/chrony.conf
 ```
-pool ntp.ubuntu.com        iburst maxsources 3 maxdelay 0.3
-pool time.nist.gov         iburst maxsources 3 maxdelay 0.3
-pool us.pool.ntp.org       iburst maxsources 3 maxdelay 0.3
+pool time.google.com       iburst minpoll 1 maxpoll 1 maxsources 3 prefer
+pool ntp.ubuntu.com        iburst minpoll 1 maxpoll 1 maxsources 3 maxdelay 0.3
+pool time.nist.gov         iburst minpoll 1 maxpoll 1 maxsources 3 maxdelay 0.3
+pool us.pool.ntp.org       iburst minpoll 1 maxpoll 1 maxsources 3 maxdelay 0.3
 
 # This directive specify the location of the file containing ID/key pairs for
 # NTP authentication.
@@ -458,7 +393,7 @@ driftfile /var/lib/chrony/chrony.drift
 logdir /var/log/chrony
 
 # Stop bad estimates upsetting machine clock.
-maxupdateskew 10.0
+maxupdateskew 5.0
 
 # This directive enables kernel synchronisation (every 11 minutes) of the
 # real-time clock. Note that it can’t be used along with the 'rtcfile' directive.
@@ -466,7 +401,7 @@ rtcsync
 
 # Step the system clock instead of slewing it if the adjustment is larger than
 # one second, but only in the first three clock updates.
-makestep 0.1 3
+makestep 0.1 -1
 
 # Get TAI-UTC offset and leap seconds from the system tz database
 leapsectz right/UTC
@@ -474,14 +409,10 @@ leapsectz right/UTC
 # Serve time even if not synchronized to a time source.
 local stratum 10
 ```
+
 #### Finish configuring chrony
 ```
-# Set UTC, disable timesyncd, restart chrony, sync hwclock
-sudo timedatectl set-timezone UTC
-sudo systemctl stop systemd-timesyncd
-sudo systemctl disable systemd-timesyncd
 sudo systemctl restart chrony
-sudo hwclock -w
 ```
 
 ## Install Rust
@@ -509,7 +440,7 @@ git tag
 (press 'q' to exit the list)
 
 git checkout <THE TAG>
-git checkout -b <NEW BRANCH NAME eg 8.5>
+git checkout -b <NEW BRANCH NAME eg 8.14>
 
 # Update submodules
 git submodule update --init --recursive
@@ -548,10 +479,8 @@ p2p:
   topics_of_interest:
     blocks: high
     messages: high
-  # Adjust max_connections based on cpu/ram usage. 512 to 1024 works well for 2cpu/4G ram.
-  # Monitor usage w/ "memory" function; Adjust max_connections down if CPU load reaches 100%.
-  max_connections: 1024
-  gossip_interval: 10s
+  public_address: "/ip4/<YOUR IP ADDRESS>/tcp/3000"
+  gossip_interval: 5s
   trusted_peers:
     - address: "/ip4/13.56.0.226/tcp/3000"
       id: 7ddf203c86a012e8863ef19d96aabba23d2445c492d86267
@@ -588,10 +517,6 @@ p2p:
 rest:
   listen: "127.0.0.1:<REST_PORT>"
 storage: /home/<YOUR USERNAME>/storage
-mempool:
-    fragment_ttl: 2h
-    log_ttl: 24h
-    garbage_collection_interval: 2h
 ```
 
 (Did you remember to replace the PLACEHOLDERS with the appropriate values)?
@@ -757,17 +682,18 @@ empty_logs
 # Consider making a backup copy of these files before deleting them, in case you change your mind.
 rm -rf ${JORMUNGANDR_STORAGE_DIR}
 
+cd
 rustup update
 git pull
 
 # Use the tagged release
-git checkout <A VERSION NUMBER SUCH AS v0.8.5>
+git checkout <A VERSION NUMBER SUCH AS v0.8.18>
 
 # Can't find the tag you want?, delete what you have locally and re-download
 git tag -l | xargs git tag -d && git fetch -t
 
 # Create a new branch for yourself
-git checkout -b <NAME OF BRANCH, e.g. 8.5>
+git checkout -b <NAME OF BRANCH, e.g. 8.18>
 
 # Compile the binaries
 git submodule update --init --recursive
@@ -972,6 +898,6 @@ f() { find . -iname "*$1*"; }
 ```
 # You finished! Buy me a beer?
 ```
-DdzFFzCqrhsrvjh19Siw3ehL78VjptLUD8TeEcQSKCHfwgxFsawZRD7RUpuDg5weU72s8Avai5QLcCLk66oimPpbGf4byf1HvRFowrkG
+DdzFFzCqrht3kMqsjpaLjr3L8tw5Jn2E9Vr9id9R33jB1P4TqRKZ87UVkzrF9NMarNLNKx5fuahvHiaD4Cz9K71CD69QQDBzS5mExsMr
 ```
 
